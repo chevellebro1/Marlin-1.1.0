@@ -65,12 +65,12 @@
 
 #define X_MIN_PIN           3
 #ifndef X_MAX_PIN
-  #define X_MAX_PIN         2
+  #define X_MAX_PIN         -1
 #endif
 #define Y_MIN_PIN          14
-#define Y_MAX_PIN          15
+#define Y_MAX_PIN          -1
 #define Z_MIN_PIN          18
-#define Z_MAX_PIN          19
+#define Z_MAX_PIN          -1
 #ifndef Z_MIN_PROBE_PIN
   #define Z_MIN_PROBE_PIN  32
 #endif
@@ -106,7 +106,7 @@
 
 #define PS_ON_PIN          12
 #define TEMP_0_PIN         13   // ANALOG NUMBERING
-#define TEMP_1_PIN         15   // ANALOG NUMBERING
+#define TEMP_1_PIN         12   // ANALOG NUMBERING
 #define TEMP_BED_PIN       14   // ANALOG NUMBERING
 
 #if ENABLED(Z_PROBE_SLED)
@@ -342,3 +342,18 @@
 #else
   #define MAX6675_SS       66 // Do not use pin 49 as this is tied to the switch inside the SD card socket to detect if there is an SD card present
 #endif
+
+#define SPINDLE            32
+#define SPINDLE_PWM        44
+
+#define CoolingFan         57
+
+#define LASER_BEAM         58
+
+#define LASER_PWR          63
+
+#define SPINDLE_POS        11
+#define SPINDLE_NEG         5
+
+#define LASER_POS           6
+#define LASER_NEG           4

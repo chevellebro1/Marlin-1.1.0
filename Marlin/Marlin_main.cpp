@@ -127,6 +127,10 @@
  *
  * M0   - Unconditional stop - Wait for user to press a button on the LCD (Only if ULTRA_LCD is enabled)
  * M1   - Same as M0
+ * M3   - Spindle On
+ * M5   - Spindle Off
+ * M10  - Laser On
+ * M11  - Laser Off
  * M17  - Enable/Power all stepper motors
  * M18  - Disable all stepper motors; same as M84
  * M20  - List SD card
@@ -148,6 +152,9 @@
  * M33  - Get the longname version of a path
  * M42  - Change pin status via gcode Use M42 Px Sy to set pin x to value y, when omitting Px the onboard led will be used.
  * M48  - Measure Z_Probe repeatability. M48 [P # of points] [X position] [Y position] [V_erboseness #] [E_ngage Probe] [L # of legs of travel]
+ * M60  - Change to CNC Mill
+ * M61  - Change to 3D Printer
+ * M62  - Change to Laser Cutter
  * M75  - Start the print job timer
  * M76  - Pause the print job timer
  * M77  - Stop the print job timer
@@ -210,6 +217,8 @@
  * M221 - Set Flow Percentage: S<percent>
  * M226 - Wait until the specified pin reaches the state required: P<pin number> S<pin state>
  * M240 - Trigger a camera to take a photograph
+ * M245 - Cooler Fan On
+ * M246 - Cooler Fan Off
  * M250 - Set LCD contrast C<contrast value> (value 0..63)
  * M280 - Set servo position absolute. P: servo index, S: angle or microseconds
  * M300 - Play beep sound S<frequency Hz> P<duration ms>
@@ -287,6 +296,9 @@ float current_position[NUM_AXIS] = { 0.0 };
 static float destination[NUM_AXIS] = { 0.0 };
 bool axis_known_position[3] = { false };
 bool axis_homed[3] = { false };
+
+int fanSpeed=0;
+int spindleSpeed=0;
 
 static long gcode_N, gcode_LastN, Stopped_gcode_LastN = 0;
 
@@ -550,6 +562,13 @@ static bool send_ok[BUFSIZE];
   #define host_keepalive() ;
   #define KEEPALIVE_STATE(n) ;
 #endif // HOST_KEEPALIVE_FEATURE
+
+static float feedrate = 1500.0, next_feedrate, saved_feedrate;
+static float rapid_feedrate = 2000;
+static float rapid_feedrate_z = 240;
+static float prev_feedrate = 0;
+static float mill = 0;
+
 
 /**
  * ***************************************************************************
@@ -834,6 +853,18 @@ void servo_init() {
   void enableStepperDrivers() { pinMode(STEPPER_RESET_PIN, INPUT); }  // set to input, which allows it to be pulled high by pullups
 #endif
 
+void startup()
+{
+  mill = 0;
+  digitalWrite(LASER_PWR, LOW);
+  digitalWrite(LASER_POS, HIGH);
+  digitalWrite(LASER_NEG, HIGH);
+  digitalWrite(SPINDLE_POS, HIGH);
+  digitalWrite(SPINDLE_NEG, HIGH);
+  digitalWrite(LASER_BEAM, LOW);
+  analogWrite(CoolingFan, 255);
+}
+
 /**
  * Marlin entry-point: Set up before the program loop
  *  - Set up the kill pin, filament runout, power hold
@@ -980,6 +1011,15 @@ void setup() {
       for (uint8_t i = 0; i < MIXING_STEPPERS; i++)
         mixing_virtual_tool_mix[t][i] = mixing_factor[i];
   #endif
+
+  pinMode(LASER_BEAM, OUTPUT);
+  pinMode(SPINDLE_POS, OUTPUT);
+  pinMode(SPINDLE_NEG, OUTPUT);
+  pinMode(SPINDLE_PWM, OUTPUT);
+  pinMode(LASER_POS, OUTPUT);
+  pinMode(LASER_NEG, OUTPUT);
+  pinMode(LASER_PWR, OUTPUT);
+  startup();
 }
 
 /**
@@ -2650,7 +2690,15 @@ void unknown_command_error() {
 inline void gcode_G0_G1() {
   if (IsRunning()) {
     gcode_get_destination(); // For X Y Z E F
-
+  if (mill == 1) {
+    next_feedrate = rapid_feedrate;
+    if(next_feedrate > 0.0) feedrate = next_feedrate;
+    if(code_seen('Z')) {
+      next_feedrate = rapid_feedrate_z;
+      if(next_feedrate > 0.0) feedrate = next_feedrate;
+        }
+      }
+  }
     #if ENABLED(FWRETRACT)
 
       if (autoretract_enabled && !(code_seen('X') || code_seen('Y') || code_seen('Z')) && code_seen('E')) {
@@ -2668,7 +2716,6 @@ inline void gcode_G0_G1() {
 
     prepare_move_to_destination();
   }
-}
 
 /**
  * G2: Clockwise Arc
@@ -2677,7 +2724,12 @@ inline void gcode_G0_G1() {
 #if ENABLED(ARC_SUPPORT)
   inline void gcode_G2_G3(bool clockwise) {
     if (IsRunning()) {
-
+      if(mill == 1) {
+        if(feedrate == rapid_feedrate) {
+          next_feedrate = prev_feedrate;
+          if(next_feedrate > 0.0) feedrate = next_feedrate;
+        }
+      }
       #if ENABLED(SF_ARC_FIX)
         bool relative_mode_backup = relative_mode;
         relative_mode = true;
@@ -7136,6 +7188,31 @@ void process_next_command() {
           break;
       #endif // ULTIPANEL
 
+      case 3: // M3 - Spindle On
+        digitalWrite(SPINDLE_POS, LOW);
+        digitalWrite(SPINDLE_NEG, LOW);
+        if(code_seen('S')) {
+          spindleSpeed = constrain(code_value_float(),0,10000);
+          analogWrite(SPINDLE_PWM, spindleSpeed / 46);
+        }
+        else {
+          spindleSpeed=5000;
+          analogWrite(SPINDLE_PWM, spindleSpeed / 46);
+        }
+        break;
+
+        case 5: // M5 - Spindle Off
+            digitalWrite(SPINDLE_POS, HIGH);
+            digitalWrite(SPINDLE_NEG, HIGH);
+          break;
+
+        case 10: // M10 - Laser On
+            digitalWrite(LASER_BEAM, HIGH);
+          break;
+
+        case 11: // M11 - Laser Off
+            digitalWrite(LASER_BEAM, LOW);
+          break;
       case 17:
         gcode_M17();
         break;
@@ -7188,6 +7265,43 @@ void process_next_command() {
           gcode_M48();
           break;
       #endif // Z_MIN_PROBE_REPEATABILITY_TEST
+
+      case 60: //M60 Change to CNC Mill
+      {
+        mill = 1;
+        digitalWrite(LASER_PWR, LOW);
+        digitalWrite(LASER_POS, HIGH);
+        digitalWrite(LASER_NEG, HIGH);
+        digitalWrite(LASER_BEAM, LOW);
+        analogWrite(CoolingFan, 255);
+      }
+      break;
+
+      case 61: //M61 Change to 3D Printer
+      {
+        mill = 0;
+        digitalWrite(LASER_PWR, LOW);
+        digitalWrite(LASER_POS, HIGH);
+        digitalWrite(LASER_NEG, HIGH);
+        digitalWrite(SPINDLE_POS, HIGH);
+        digitalWrite(SPINDLE_NEG, HIGH);
+        digitalWrite(LASER_BEAM, LOW);
+        analogWrite(CoolingFan, 255);
+      }
+      break;
+
+      case 62: //M62 Change to Laser Cutter
+      {
+        mill = 1;
+        digitalWrite(LASER_PWR, HIGH);
+        digitalWrite(LASER_POS, LOW);
+        digitalWrite(LASER_NEG, LOW);
+        digitalWrite(SPINDLE_POS, HIGH);
+        digitalWrite(SPINDLE_NEG, HIGH);
+        digitalWrite(LASER_BEAM, LOW);
+        analogWrite(CoolingFan, 0);
+      }
+      break;
 
       case 75: // Start print timer
         gcode_M75();
@@ -7489,6 +7603,18 @@ void process_next_command() {
           gcode_M240();
           break;
       #endif // CHDK || PHOTOGRAPH_PIN
+
+      case 245: //M245 Cooling Fan On
+        {
+          analogWrite(CoolingFan, 0);
+        }
+      break;
+
+      case 246: //M246 Cooling Fan Off
+        {
+          analogWrite(CoolingFan, 255);
+        }
+      break;
 
       #if HAS_LCD_CONTRAST
         case 250: // M250  Set LCD contrast value: C<value> (value 0..63)
